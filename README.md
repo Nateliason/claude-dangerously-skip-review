@@ -1,5 +1,7 @@
 # dangerously-skip-review
 
+[![npm version](https://img.shields.io/npm/v/dangerously-skip-review.svg)](https://www.npmjs.com/package/dangerously-skip-review)
+
 > ⚠️ **Warning**: These workflows give Claude significant autonomy over your codebase. Use responsibly.
 
 Dangerously Skip Review is a set of GitHub Actions workflows that enable Claude Code to autonomously review PRs, implement fixes, and manage follow-up issues.
@@ -25,16 +27,21 @@ Reach out to Nat Eliason (https://x.com/nateliason) with questions or concerns.
 npx dangerously-skip-review
 ```
 
-This will interactively install the workflows to your `.github/workflows/` directory.
+This will install all workflows to your `.github/workflows/` directory.
 
 ### Options
 
 ```bash
-# Install all workflows at once
-npx dangerously-skip-review --all
+# Interactively select which workflows to install
+npx dangerously-skip-review --interactive
+npx dangerously-skip-review -i
 
 # Install only the minimal @claude mentions workflow
 npx dangerously-skip-review --minimal
+
+# Overwrite existing workflows without prompting
+npx dangerously-skip-review --force
+npx dangerously-skip-review -y
 
 # Show help
 npx dangerously-skip-review --help

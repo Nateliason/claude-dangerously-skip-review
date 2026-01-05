@@ -1,6 +1,6 @@
 {
   "name": "dangerously-skip-review",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "GitHub Actions workflows that give Claude Code more autonomy for code reviews, fixes, and issue management",
   "keywords": [
     "claude",

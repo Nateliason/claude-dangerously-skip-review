@@ -50,9 +50,10 @@ ${COLORS.bright}USAGE${COLORS.reset}
   npx dangerously-skip-review [options]
 
 ${COLORS.bright}OPTIONS${COLORS.reset}
-  --all         Install all workflows (default: interactive selection)
-  --minimal     Install only the base @claude mentions workflow
-  --help, -h    Show this help message
+  --interactive, -i  Interactively select which workflows to install
+  --minimal          Install only the base @claude mentions workflow
+  --force, -y        Overwrite existing workflows without prompting
+  --help, -h         Show this help message
 
 ${COLORS.bright}WORKFLOWS INCLUDED${COLORS.reset}
   • claude.yml                  - Respond to @claude mentions in issues/PRs
@@ -162,15 +163,16 @@ async function main() {
   // Determine which workflows to install
   let workflowsToInstall;
 
-  if (args.includes('--all')) {
-    workflowsToInstall = WORKFLOWS;
-    logStep('Installing all workflows...');
+  if (args.includes('--interactive') || args.includes('-i')) {
+    // Interactive selection
+    workflowsToInstall = await promptSelection(WORKFLOWS);
   } else if (args.includes('--minimal')) {
     workflowsToInstall = WORKFLOWS.filter((w) => w.required);
     logStep('Installing minimal workflow set...');
   } else {
-    // Interactive selection
-    workflowsToInstall = await promptSelection(WORKFLOWS);
+    // Default: install all workflows
+    workflowsToInstall = WORKFLOWS;
+    logStep('Installing all workflows...');
   }
 
   if (workflowsToInstall.length === 0) {
@@ -182,6 +184,7 @@ async function main() {
   logStep('Installing workflows...');
   const installed = [];
   const skipped = [];
+  const forceOverwrite = args.includes('--force') || args.includes('-y');
 
   // Check if any workflows need overwrite confirmation
   const existingWorkflows = workflowsToInstall.filter((w) =>
@@ -189,14 +192,14 @@ async function main() {
   );
 
   let overwriteRl = null;
-  if (existingWorkflows.length > 0) {
+  if (existingWorkflows.length > 0 && !forceOverwrite) {
     overwriteRl = createReadlineInterface();
   }
 
   for (const workflow of workflowsToInstall) {
     const targetPath = path.join(workflowsDir, workflow.file);
 
-    if (fs.existsSync(targetPath)) {
+    if (fs.existsSync(targetPath) && !forceOverwrite) {
       const answer = await askQuestion(
         overwriteRl,
         `  ${workflow.file} already exists. Overwrite? [y/N]: `
