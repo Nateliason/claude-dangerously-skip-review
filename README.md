@@ -1,5 +1,7 @@
 # dangerously-skip-review
 
+[![npm version](https://img.shields.io/npm/v/dangerously-skip-review.svg)](https://www.npmjs.com/package/dangerously-skip-review)
+
 > ⚠️ **Warning**: These workflows give Claude significant autonomy over your codebase. Use responsibly.
 
 Dangerously Skip Review is a set of GitHub Actions workflows that enable Claude Code to autonomously review PRs, implement fixes, and manage follow-up issues.
