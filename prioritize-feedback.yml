@@ -1,0 +1,215 @@
+name: Prioritize PR Feedback
+
+on:
+  workflow_run:
+    workflows: ["Claude Code Review"]
+    types: [completed]
+
+jobs:
+  prioritize-feedback:
+    # Only run if the review workflow succeeded and it was a PR event
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+      issues: write
+      checks: write
+      statuses: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Get PR info from workflow run
+        id: get-pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Get the PR associated with the workflow run
+            const runData = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: ${{ github.event.workflow_run.id }}
+            });
+
+            // The head_branch and head_sha can help us find the PR
+            const headBranch = runData.data.head_branch;
+            const headSha = runData.data.head_sha;
+
+            // Find PRs with this head SHA
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${context.repo.owner}:${headBranch}`
+            });
+
+            if (prs.data.length === 0) {
+              console.log('No open PR found for this workflow run');
+              return;
+            }
+
+            const prNumber = prs.data[0].number;
+            console.log(`Found PR #${prNumber}`);
+            core.setOutput('pr_number', prNumber);
+            core.setOutput('head_sha', headSha);
+
+      - name: Create in-progress check
+        if: steps.get-pr.outputs.pr_number
+        id: create-check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const check = await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Prioritize PR Feedback',
+              head_sha: '${{ steps.get-pr.outputs.head_sha }}',
+              status: 'in_progress',
+              started_at: new Date().toISOString(),
+              output: {
+                title: 'Analyzing review feedback',
+                summary: 'Claude is prioritizing the code review feedback and may implement fixes...'
+              }
+            });
+            core.setOutput('check_run_id', check.data.id);
+
+      - name: Prioritize Feedback with Claude
+        if: steps.get-pr.outputs.pr_number
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ steps.get-pr.outputs.pr_number }}
+
+            A code review has just been completed on this PR. Your job is to analyze the review feedback and create a clear, actionable summary for the engineer.
+
+            ## Instructions
+
+            1. First, use `gh pr view ${{ steps.get-pr.outputs.pr_number }} --comments` to read all comments on the PR
+            2. Identify the Claude Code Review feedback (it will be the most recent substantive review comment)
+            3. Analyze each piece of feedback and categorize it
+
+            ## Create a summary comment with these sections:
+
+            ### ✅ Address in This PR
+            List items that MUST be fixed in this PR before merging. These are:
+            - Bugs or errors that would break functionality
+            - Security vulnerabilities
+            - Clear violations of project conventions (per CLAUDE.md)
+            - Simple fixes that take < 5 minutes
+
+            For each item, give a clear action item, e.g.:
+            - "Fix null check in `processUser()` - line 42"
+
+            ### 📋 Create as Separate Issues
+            **Be conservative here.** Only list items that are genuinely worth tracking as separate work. NOT everything from the review needs an issue.
+
+            DO create issues for:
+            - Bugs or edge cases that aren't critical but should be fixed eventually
+            - Security hardening that isn't urgent
+            - Performance problems with measurable user impact
+            - Technical debt that will cause real problems if ignored
+
+            DO NOT create issues for:
+            - Minor style suggestions or nitpicks
+            - "Nice to have" improvements with unclear value
+            - Speculative refactoring ideas
+            - Generic suggestions like "consider adding tests" or "could add more comments"
+            - Anything vague or without a clear actionable fix
+
+            If the review feedback is mostly positive with minor suggestions, it's fine to have ZERO items in this section. Quality over quantity.
+
+            For each item you DO include, provide a suggested issue title.
+
+            ### ✨ Summary
+            One sentence: "This PR is [ready to merge after X fixes / blocked by questions / ready as-is]"
+
+            ## Output
+
+            Use `gh pr comment ${{ steps.get-pr.outputs.pr_number }}` to post your prioritized summary.
+
+            Be concise. Engineers should be able to scan this in 30 seconds and know exactly what to do next.
+
+          claude_args: '--allowed-tools "Bash(gh pr comment:*),Bash(gh pr view:*)"'
+
+      - name: Create Issues and Implement Fixes
+        if: steps.get-pr.outputs.pr_number
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          model: claude-opus-4-5-20250514
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ steps.get-pr.outputs.pr_number }}
+
+            You just posted a prioritized feedback summary on this PR. Now you need to:
+            1. Create GitHub issues for follow-up items
+            2. Implement the must-address fixes directly
+
+            ## Instructions
+
+            ### Step 1: Read the Prioritized Feedback
+            Use `gh pr view ${{ steps.get-pr.outputs.pr_number }} --comments` to find the feedback summary you just posted.
+            Look for the comment with sections "✅ Address in This PR" and "📋 Create as Separate Issues".
+
+            ### Step 2: Create GitHub Issues
+            For each item listed under "📋 Create as Separate Issues":
+            - Create a GitHub issue using `gh issue create`
+            - Use the suggested title from the feedback
+            - In the body, include:
+              - A reference to the PR: "Follow-up from PR #${{ steps.get-pr.outputs.pr_number }}"
+              - The original feedback/suggestion
+              - Add a note: "This issue was auto-generated from code review feedback and should be addressed after the PR is merged."
+            - Add the label "follow-up" if it exists (create it if it doesn't using `gh label create follow-up --description "Follow-up items from code review" --color 0E8A16` first)
+
+            **Important:** If the "📋 Create as Separate Issues" section is empty or says there are no items, skip issue creation entirely. Do NOT create issues for minor feedback that wasn't explicitly listed.
+
+            ### Step 3: Implement Must-Address Fixes
+            If there are items under "✅ Address in This PR":
+            1. First, checkout the PR branch using `gh pr checkout ${{ steps.get-pr.outputs.pr_number }}`
+            2. For each must-address item, implement the fix directly in the code
+            3. After making all changes, commit them with a clear message like "Fix code review feedback"
+            4. Push the changes to the PR branch
+            5. Post a comment on the PR summarizing what fixes were implemented
+
+            If there are NO items under "✅ Address in This PR", post a comment noting that no immediate fixes are required and the PR is ready for review.
+
+            ## Important
+            - Only create issues for items explicitly listed under "📋 Create as Separate Issues"
+            - Only implement fixes for items under "✅ Address in This PR"
+            - Be precise - implement exactly what was requested in the feedback
+            - Always test your changes compile/work before committing
+
+          claude_args: '--allowed-tools "Bash(gh pr comment:*),Bash(gh pr view:*),Bash(gh pr checkout:*),Bash(gh pr diff:*),Bash(gh issue create:*),Bash(gh label create:*),Bash(gh label list:*),Bash(gh api:*),Bash(git:*),Bash(npm:*),Read,Edit,Write,Glob,Grep"'
+
+      - name: Mark check as completed
+        if: always() && steps.create-check.outputs.check_run_id
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const jobStatus = '${{ job.status }}';
+            let conclusion = 'failure';
+            if (jobStatus === 'success') conclusion = 'success';
+            else if (jobStatus === 'cancelled') conclusion = 'cancelled';
+            else conclusion = 'failure';
+            await github.rest.checks.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              check_run_id: ${{ steps.create-check.outputs.check_run_id }},
+              status: 'completed',
+              conclusion: conclusion,
+              completed_at: new Date().toISOString(),
+              output: {
+                title: conclusion === 'success' ? 'Feedback processed' : 'Workflow failed',
+                summary: conclusion === 'success'
+                  ? 'Code review feedback has been prioritized and any necessary fixes have been implemented.'
+                  : 'The workflow encountered an error. Check the workflow logs for details.'
+              }
+            });

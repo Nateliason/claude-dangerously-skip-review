@@ -1,0 +1,196 @@
+name: Verify PR Fixes
+
+on:
+  workflow_run:
+    workflows: ["Prioritize PR Feedback"]
+    types: [completed]
+
+jobs:
+  verify-fixes:
+    # Only run if Prioritize PR Feedback workflow succeeded
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+      checks: write
+      statuses: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Get PR info from workflow run
+        id: get-pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Get the workflow run details
+            const runData = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: ${{ github.event.workflow_run.id }}
+            });
+
+            const headBranch = runData.data.head_branch;
+            const headSha = runData.data.head_sha;
+
+            // Find PRs with this head branch
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${context.repo.owner}:${headBranch}`
+            });
+
+            if (prs.data.length === 0) {
+              console.log('No open PR found for this workflow run');
+              return;
+            }
+
+            const prNumber = prs.data[0].number;
+            console.log(`Found PR #${prNumber}`);
+            core.setOutput('pr_number', prNumber);
+            core.setOutput('head_sha', headSha);
+
+      - name: Create in-progress check
+        if: steps.get-pr.outputs.pr_number
+        id: create-check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const check = await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Verify PR Fixes',
+              head_sha: '${{ steps.get-pr.outputs.head_sha }}',
+              status: 'in_progress',
+              started_at: new Date().toISOString(),
+              output: {
+                title: 'Verifying fixes',
+                summary: 'Claude is verifying that code review fixes were implemented correctly...'
+              }
+            });
+            core.setOutput('check_run_id', check.data.id);
+
+      - name: Check if fixes were implemented
+        id: check-fix-run
+        if: steps.get-pr.outputs.pr_number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Get the comments on this PR to see if fixes were implemented
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.get-pr.outputs.pr_number }}
+            });
+
+            // Look for a prioritized feedback comment with must-address items
+            const feedbackComment = comments.data.reverse().find(c =>
+              c.body && c.body.includes('✅ Address in This PR')
+            );
+
+            if (feedbackComment && feedbackComment.body.includes('✅ Address in This PR')) {
+              // Check if there were actual items to fix (not just an empty section)
+              const hasItemsToFix = feedbackComment.body.match(/✅ Address in This PR[\s\S]*?(-|\d\.)/);
+              if (hasItemsToFix) {
+                console.log('Found feedback with must-address items, verifying fixes');
+                core.setOutput('is_fix_run', 'true');
+              } else {
+                console.log('No must-address items found, skipping verification');
+                core.setOutput('is_fix_run', 'false');
+              }
+            } else {
+              console.log('No prioritized feedback comment found, skipping verification');
+              core.setOutput('is_fix_run', 'false');
+            }
+
+      - name: Verify Fixes and Assess Merge Readiness
+        if: steps.get-pr.outputs.pr_number && steps.check-fix-run.outputs.is_fix_run == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          model: claude-opus-4-5-20250514
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ steps.get-pr.outputs.pr_number }}
+
+            Claude just finished implementing fixes for this PR. Your job is to verify that the must-address items have been properly fixed and assess whether this PR is ready to merge.
+
+            ## Instructions
+
+            ### Step 1: Gather Context
+            1. Use `gh pr view ${{ steps.get-pr.outputs.pr_number }} --comments` to read all comments
+            2. Find the prioritized feedback comment (with "✅ Address in This PR" section)
+            3. Find what fixes were requested
+            4. Use `gh pr diff ${{ steps.get-pr.outputs.pr_number }}` to see the current state of changes
+
+            ### Step 2: Verify Each Fix
+            For each item that was listed under "✅ Address in This PR":
+            - Check if the fix was implemented correctly
+            - Note any issues or incomplete fixes
+
+            ### Step 3: Post Verification Comment
+            Post a comment with this format:
+
+            ## 🔍 Fix Verification
+
+            ### Fixes Verified
+            For each fix that was properly addressed:
+            - ✅ [Description of fix] - Verified
+
+            ### Issues Found (if any)
+            For any fixes that were not properly addressed or have issues:
+            - ❌ [Description] - [What's wrong]
+
+            ### 📊 Merge Assessment
+
+            **Status:** [Ready to Merge ✅ / Needs Attention ⚠️]
+
+            [If ready to merge:]
+            All must-address items have been fixed. The following items have been tracked as separate issues for follow-up:
+            - [List any issues that were created]
+
+            This PR is ready for final review and merge.
+
+            [If needs attention:]
+            The following items still need to be addressed:
+            - [List remaining issues]
+
+            ## Important Notes
+            - Focus ONLY on the must-address items from the original prioritized feedback
+            - Do NOT re-review the entire PR or raise new issues
+            - The "Create as Separate Issues" items have already been tracked and should NOT block this PR
+            - Be concise and actionable
+
+          claude_args: '--allowed-tools "Bash(gh pr comment:*),Bash(gh pr view:*),Bash(gh pr diff:*)"'
+
+      - name: Mark check as completed
+        if: always() && steps.create-check.outputs.check_run_id
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const jobStatus = '${{ job.status }}';
+            let conclusion = 'failure';
+            if (jobStatus === 'success') conclusion = 'success';
+            else if (jobStatus === 'cancelled') conclusion = 'cancelled';
+            else conclusion = 'failure';
+            await github.rest.checks.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              check_run_id: ${{ steps.create-check.outputs.check_run_id }},
+              status: 'completed',
+              conclusion: conclusion,
+              completed_at: new Date().toISOString(),
+              output: {
+                title: conclusion === 'success' ? 'Verification complete' : 'Workflow failed',
+                summary: conclusion === 'success'
+                  ? 'Fix verification has been completed. Check the PR comments for details.'
+                  : 'The workflow encountered an error. Check the workflow logs for details.'
+              }
+            });

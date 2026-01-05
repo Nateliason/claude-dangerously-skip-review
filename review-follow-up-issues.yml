@@ -1,0 +1,95 @@
+name: Review Follow-up Issues
+
+on:
+  # Trigger when the PR that created the issue is closed
+  pull_request:
+    types: [closed]
+
+jobs:
+  review-follow-up-issues:
+    # Only run when PR is merged (not just closed)
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Find and review follow-up issues
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          model: claude-opus-4-5-20250514
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            PR TITLE: ${{ github.event.pull_request.title }}
+
+            A PR has just been merged. Check if there are any follow-up issues that were created from the code review of this PR, and review each one to determine if it should be implemented.
+
+            ## Instructions
+
+            ### Step 1: Find Follow-up Issues
+            Search for issues that reference this PR:
+            ```
+            gh issue list --label "follow-up" --state open --json number,title,body
+            ```
+
+            Filter to only issues that mention "PR #${{ github.event.pull_request.number }}" in their body.
+
+            If no follow-up issues reference this PR, post nothing and exit.
+
+            ### Step 2: Review Each Issue
+            For each follow-up issue found:
+
+            1. **Read the issue carefully** - Understand what was suggested in the code review
+            2. **Examine the current codebase** - Look at the relevant code to understand context
+            3. **Make a judgment call** - Decide if this issue:
+               - **Should be implemented**: The suggestion adds real value (fixes a bug, improves security, prevents a real problem, or is a clear improvement)
+               - **Should be closed**: The suggestion is too minor, speculative, already addressed, or the cost/benefit doesn't justify the work
+
+            ### Step 3: Take Action
+
+            **If the issue should be CLOSED:**
+            - Close the issue with `gh issue close <number>`
+            - Add a comment explaining why: "After reviewing the merged PR and current codebase, this suggestion [reason]. Closing as not actionable."
+
+            **If the issue should be IMPLEMENTED:**
+            1. Create a new branch from main: `git checkout -b fix/issue-<number>-<short-description>`
+            2. Run `npm install` to ensure dependencies are installed
+            3. Implement the fix described in the issue
+            4. **Run verification steps** (REQUIRED before creating a PR):
+               - Run `npm run typecheck` to verify TypeScript types
+               - Run `npm test` to ensure tests pass
+               - If either step fails, analyze the error and fix it. Keep iterating until both pass.
+               - If after 3 attempts you still cannot get verification to pass, comment on the issue explaining what's blocking and move to the next issue.
+            5. Only if verification passes: Commit with a clear message referencing the issue: "Fix #<number>: <description>"
+            6. Push the branch and create a PR:
+               ```
+               gh pr create --title "Fix #<number>: <short-description>" --body "Implements the follow-up suggestion from issue #<number>.
+
+               ## Changes
+               <describe what you changed>
+
+               ## Original Issue
+               <quote the original suggestion>
+
+               Closes #<number>"
+               ```
+            7. Add a comment on the original issue noting the PR was created
+
+            ### Important Guidelines
+            - Be conservative: Only implement changes that provide clear value
+            - Don't gold-plate: Implement exactly what's needed, nothing more
+            - Test your changes: Make sure the code compiles and tests pass before creating a PR
+            - One PR per issue: Create separate PRs for separate issues
+            - If you're unsure about an issue, lean toward closing it with a clear explanation
+
+          claude_args: '--allowed-tools "Bash(gh issue:*),Bash(gh pr:*),Bash(gh label:*),Bash(git:*),Bash(npm:*),Read,Edit,Write,Glob,Grep"'
