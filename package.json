@@ -1,0 +1,32 @@
+{
+  "name": "dangerously-skip-review",
+  "version": "1.0.0",
+  "description": "GitHub Actions workflows that give Claude Code more autonomy for code reviews, fixes, and issue management",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "github-actions",
+    "code-review",
+    "ai",
+    "automation"
+  ],
+  "author": "Nat Eliason <nateliason@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nateliason/claude-dangerously-skip-review"
+  },
+  "bin": {
+    "dangerously-skip-review": "./bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "workflows"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
