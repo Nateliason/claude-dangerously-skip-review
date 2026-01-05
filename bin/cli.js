@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 
 const WORKFLOWS = [
   { file: 'claude.yml', name: 'Claude Code (@claude mentions)', required: true },
@@ -61,8 +62,8 @@ ${COLORS.bright}WORKFLOWS INCLUDED${COLORS.reset}
   • review-follow-up-issues.yml - Review follow-up issues after PR merge
 
 ${COLORS.bright}SETUP${COLORS.reset}
-  After installation, add CLAUDE_CODE_OAUTH_TOKEN to your repository secrets.
-  Get the token from: https://console.anthropic.com/
+  Install Claude Code GitHub Actions first, then these workflows will work automatically.
+  See: https://docs.anthropic.com/en/docs/claude-code/github-actions
 `);
 }
 
@@ -90,15 +91,19 @@ function copyWorkflow(workflowFile, targetDir) {
   return targetPath;
 }
 
-async function promptSelection(workflows) {
-  const readline = require('readline');
-  const rl = readline.createInterface({
+function createReadlineInterface() {
+  return readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
+}
 
-  const question = (prompt) =>
-    new Promise((resolve) => rl.question(prompt, resolve));
+function askQuestion(rl, prompt) {
+  return new Promise((resolve) => rl.question(prompt, resolve));
+}
+
+async function promptSelection(workflows) {
+  const rl = createReadlineInterface();
 
   console.log(`\n${COLORS.bright}Select workflows to install:${COLORS.reset}\n`);
 
@@ -108,7 +113,8 @@ async function promptSelection(workflows) {
     const w = workflows[i];
     const marker = w.required ? ' (recommended)' : '';
     const defaultAnswer = w.required ? 'Y' : 'n';
-    const answer = await question(
+    const answer = await askQuestion(
+      rl,
       `  ${i + 1}. ${w.name}${marker} [${defaultAnswer}]: `
     );
 
@@ -177,23 +183,24 @@ async function main() {
   const installed = [];
   const skipped = [];
 
+  // Check if any workflows need overwrite confirmation
+  const existingWorkflows = workflowsToInstall.filter((w) =>
+    fs.existsSync(path.join(workflowsDir, w.file))
+  );
+
+  let overwriteRl = null;
+  if (existingWorkflows.length > 0) {
+    overwriteRl = createReadlineInterface();
+  }
+
   for (const workflow of workflowsToInstall) {
     const targetPath = path.join(workflowsDir, workflow.file);
 
     if (fs.existsSync(targetPath)) {
-      const readline = require('readline');
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
-
-      const answer = await new Promise((resolve) =>
-        rl.question(
-          `  ${workflow.file} already exists. Overwrite? [y/N]: `,
-          resolve
-        )
+      const answer = await askQuestion(
+        overwriteRl,
+        `  ${workflow.file} already exists. Overwrite? [y/N]: `
       );
-      rl.close();
 
       if (answer.toLowerCase() !== 'y' && answer.toLowerCase() !== 'yes') {
         skipped.push(workflow.file);
@@ -210,6 +217,10 @@ async function main() {
     }
   }
 
+  if (overwriteRl) {
+    overwriteRl.close();
+  }
+
   // Summary
   console.log(`\n${COLORS.bright}Summary${COLORS.reset}`);
   if (installed.length > 0) {
@@ -222,15 +233,13 @@ async function main() {
   // Next steps
   console.log(`\n${COLORS.bright}Next Steps${COLORS.reset}`);
   console.log(`
-1. Add ${COLORS.cyan}CLAUDE_CODE_OAUTH_TOKEN${COLORS.reset} to your repository secrets:
-   → Go to: Settings → Secrets and variables → Actions → New repository secret
+1. Install Claude Code GitHub Actions if you haven't already:
+   → https://docs.anthropic.com/en/docs/claude-code/github-actions
+   → The OAuth token will be configured automatically
 
-2. Get your OAuth token from:
-   → https://console.anthropic.com/
+2. (Optional) Customize the workflows in .github/workflows/
 
-3. (Optional) Customize the workflows in .github/workflows/
-
-4. Commit and push the workflow files:
+3. Commit and push the workflow files:
    ${COLORS.cyan}git add .github/workflows/
    git commit -m "Add Claude Code workflows"
    git push${COLORS.reset}
@@ -240,7 +249,18 @@ ${COLORS.yellow}⚠ Warning:${COLORS.reset} These workflows give Claude signific
 `);
 }
 
-main().catch((err) => {
-  logError(`Error: ${err.message}`);
-  process.exit(1);
-});
+// Export for testing
+module.exports = {
+  WORKFLOWS,
+  COLORS,
+  findGitRoot,
+  copyWorkflow,
+};
+
+// Run main only if this is the entry point
+if (require.main === module) {
+  main().catch((err) => {
+    logError(`Error: ${err.message}`);
+    process.exit(1);
+  });
+}

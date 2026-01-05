@@ -15,6 +15,10 @@ By installing the complete workflow, once you push a PR:
 
 Note: This is an independent enhancement on the normal Github Actions you can install in Claude Code. It is NOT affiliated with or endorsed by Anthropic (yet!) 
 
+PRs welcome for any improvements. 
+
+Reach out to Nat Eliason (https://x.com/nateliason) with questions or concerns. 
+
 ## Installation
 
 ```bash
@@ -38,14 +42,9 @@ npx dangerously-skip-review --help
 
 ## Setup
 
-After installing the workflows, you need to add your Claude Code OAuth token to your repository secrets:
+**Prerequisite**: Install the [Claude Code GitHub Actions](https://docs.anthropic.com/en/docs/claude-code/github-actions) first. This will configure the `CLAUDE_CODE_OAUTH_TOKEN` secret automatically.
 
-**Note** If you installed the normal Claude Code Github Actions, you don't need to do this. It should work automatically.
-
-1. Go to your repository → **Settings** → **Secrets and variables** → **Actions**
-2. Click **New repository secret**
-3. Name: `CLAUDE_CODE_OAUTH_TOKEN`
-4. Value: Your OAuth token from [console.anthropic.com](https://console.anthropic.com/)
+Once Claude Code GitHub Actions are installed, these workflows will work out of the box.
 
 ## Included Workflows
 

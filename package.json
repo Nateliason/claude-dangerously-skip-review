@@ -10,11 +10,11 @@
     "ai",
     "automation"
   ],
-  "author": "",
+  "author": "Nat Eliason <nateliason@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/dangerously-skip-review"
+    "url": "https://github.com/Nateliason/claude-dangerously-skip-review"
   },
   "bin": {
     "dangerously-skip-review": "./bin/cli.js"
@@ -23,6 +23,9 @@
     "bin",
     "workflows"
   ],
+  "scripts": {
+    "test": "node --test"
+  },
   "engines": {
     "node": ">=16.0.0"
   }
